@@ -1,0 +1,52 @@
+name: Docker Build & Measure
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Start build timer
+        id: start-time
+        run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Pull base image to exclude pull time
+        run: docker pull python:3.12-bullseye
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        id: build
+        run: |
+          docker build -t spaceship-app:ci .
+          docker image inspect spaceship-app:ci --format='{{.Size}}' > image_size.txt
+
+      - name: End build timer
+        id: end-time
+        run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate duration and size
+        run: |
+          START=${{ steps.start-time.outputs.time }}
+          END=${{ steps.end-time.outputs.time }}
+          DURATION=$((END - START))
+          SIZE=$(cat image_size.txt)
+          echo "Docker image built in $DURATION seconds."
+          echo "Image size: $((SIZE / 1024 / 1024)) MB."
+
+      - name: Done
+        run: echo "Build complete."
