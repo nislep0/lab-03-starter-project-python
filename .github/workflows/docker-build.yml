@@ -1,4 +1,4 @@
-name: Docker Build & Measure
+name: Docker Build Different Variants
 
 on:
   push:
@@ -7,8 +7,13 @@ on:
   pull_request:
 
 jobs:
-  build:
+  build-matrix:
+    name: Build Docker Image - ${{ matrix.variant }}
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        variant: [default, alpine, numpy, numpy-alpine]
 
     steps:
       - name: Checkout repository
@@ -18,35 +23,48 @@ jobs:
         id: start-time
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
-      - name: Pull base image to exclude pull time
-        run: docker pull python:3.12-bullseye
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Pull base image
+        run: |
+          if [[ "${{ matrix.variant }}" == "alpine" ]]; then
+            docker pull python:3.12-alpine
+          elif [[ "${{ matrix.variant }}" == "numpy-alpine" ]]; then
+            docker pull python:3.12-alpine
+          else
+            docker pull python:3.12-bullseye
+          fi
 
       - name: Build Docker image
         id: build
         run: |
-          docker build -t spaceship-app:ci .
-          docker image inspect spaceship-app:ci --format='{{.Size}}' > image_size.txt
+          cp Dockerfile Dockerfile.temp
+
+          if [[ "${{ matrix.variant }}" == "alpine" ]]; then
+            sed -i 's|python:3.12-bullseye|python:3.12-alpine|' Dockerfile.temp
+          elif [[ "${{ matrix.variant }}" == "numpy" ]]; then
+            echo 'RUN pip install numpy==1.26.4' >> Dockerfile.temp
+          elif [[ "${{ matrix.variant }}" == "numpy-alpine" ]]; then
+            sed -i 's|python:3.12-bullseye|python:3.12-alpine|' Dockerfile.temp
+            echo 'RUN apk add --no-cache libstdc++ && pip install numpy==1.26.4' >> Dockerfile.temp
+          fi
+
+          docker build -f Dockerfile.temp -t spaceship-${{ matrix.variant }} .
+          docker image inspect spaceship-${{ matrix.variant }} --format='{{.Size}}' > image_size.txt
 
       - name: End build timer
         id: end-time
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Calculate duration and size
+      - name: Calculate build stats
         run: |
           START=${{ steps.start-time.outputs.time }}
           END=${{ steps.end-time.outputs.time }}
           DURATION=$((END - START))
           SIZE=$(cat image_size.txt)
-          echo "Docker image built in $DURATION seconds."
-          echo "Image size: $((SIZE / 1024 / 1024)) MB."
+          SIZE_MB=$((SIZE / 1024 / 1024))
 
-      - name: Done
-        run: echo "Build complete."
+          echo "Variant: ${{ matrix.variant }}"
+          echo "Build time: $DURATION seconds"
+          echo "Image size: $SIZE_MB MB"
+
+      - name: Cleanup
+        run: rm -f Dockerfile.temp image_size.txt
